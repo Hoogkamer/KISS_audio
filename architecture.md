@@ -1,0 +1,77 @@
+# KISS Audio - Technical Architecture
+
+KISS Audio is an Android-native audio center built on the **KISS Principle** (Keep It Simple, Stupid). It is designed to turn any Android device into a dedicated, state-persistent audio hub.
+
+## 1. Overview
+
+KISS Audio is an Android application designed for independent management of three distinct audio categories: Music, Radio, and Podcasts. It focuses on offline reliability, context-specific state management, and a high-visibility UI.
+
+## 2. Core Architecture
+
+The application follows a modular design where each audio type maintains its own independent state while sharing a common media engine. KISS Audio achieves this through an MVI-based (Model-View-Intent) state architecture and a decoupled Media3 (ExoPlayer) service layer.
+
+### A. Media Engine (Media3 / ExoPlayer)
+- **Service-First Design:** The `MusicService` (extending `MediaSessionService`) owns the `ExoPlayer` instance. This allows playback to continue even when the UI is not visible or when the app is in Launcher mode.
+- **State Synchronization:** The `PlayerViewModel` acts as a bridge, observing the `MediaController` and exposing the current playback state (position, duration, metadata) to the UI.
+
+### B. State Management (MVI)
+Each module (Music, Radio, Podcasts) has its own state object:
+- **`MusicState`**: Tracks the active "Deck" (folder), file list, and current track index.
+- **`RadioState`**: Tracks station lists and search results.
+- **`PodcastState`**: Tracks subscriptions, episode lists, and download progress.
+
+---
+
+## 3. Data Model
+
+### Audio Channels (Persisted in Room)
+Every audio source is treated as an `AudioChannel`.
+- `ChannelType.FOLDER`: Represents a Music Deck.
+- `ChannelType.RADIO`: Represents a streaming station.
+- `ChannelType.PODCAST`: Represents an RSS subscription.
+
+---
+
+## 4. Module Specifications
+
+### Music (Decks)
+The Music module is built for **Folder-Based Playback**. 
+- Users pick a directory via the System Access Framework (SAF).
+- The app scans for audio files and creates a local queue.
+- **Position Persistence:** Every Deck saves its `currentTrackIndex` and `currentPositionMs` when playback stops.
+
+### Radio (Stations)
+- **Station Discovery:** Uses the Radio Browser API for global station search.
+- **Metadata:** Real-time ICY metadata extraction from streams to show current track/artist.
+
+### Podcasts (Subscriptions)
+- **RSS Parsing:** Custom XML parser for podcast feeds.
+- **Background Downloads:** Uses `WorkManager` for reliable, battery-efficient episode downloads.
+- **Storage Management:** Automatic deletion of finished episodes.
+
+---
+
+## 5. Hub & Launcher Integration
+
+KISS Audio is designed to be the "Center" of the device.
+- **Launcher Mode:** Configured with `CATEGORY_HOME` to serve as a distraction-free home screen.
+- **System Integration:** Includes a dedicated utility to launch the system clock/alarm, making it ideal for bedside audio setups.
+
+---
+
+## 6. Playback State & Navigation Logic
+
+A critical part of the KISS philosophy is that the app should always remember "where you are."
+
+### State-Based Navigation
+The UI state (`NavigationDestination`) and module-specific navigation (e.g., `PodcastNavigation`) are decoupled from the media engine but react to it.
+- **Auto-Navigation:** When a podcast episode is triggered, the app automatically navigates to the `EpisodeDetailScreen`.
+- **Context Resumption:** If you switch from Podcasts to Radio and back, the app remains on the last viewed screen for that module.
+
+### Cleanup Rituals
+- **Episode Completion:** When an episode finishes (or is manually marked played), the app:
+    1. Stops playback.
+    2. Clears the Media3 session.
+    3. Resets the `activeEpisodeId`.
+    4. Navigates back to the previous context (Dashboard or Show Detail).
+    5. Deletes the local file.
