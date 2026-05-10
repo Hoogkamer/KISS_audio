@@ -19,10 +19,20 @@ Each module (Music, Radio, Podcasts) has its own state object:
 - **`MusicState`**: Tracks the active "Deck" (folder), file list, and current track index.
 - **`RadioState`**: Tracks station lists and search results.
 - **`PodcastState`**: Tracks subscriptions, episode lists, and download progress.
+- **`PlayerUIState`**: A unified bridging object that maps module-specific states into a single, standardized format for the `UnifiedPlayer`.
 
 ---
 
-## 3. Data Model
+## 3. UI Architecture (The "Tonmeister" Aesthetic)
+
+KISS Audio employs a strict functional minimalist design inspired by Dieter Rams and early Braun audio equipment. 
+- **UnifiedPlayer:** Instead of separate UI components for Music, Radio, and Podcasts, all playback is routed through a single `UnifiedPlayer` component. This ensures 100% visual consistency.
+- **Precision Typography & Layout:** Uses a "scored grid" layout, monospace typography for numerical data (like timestamps), and a "Tuner Needle" style progress bar.
+- **Color Discipline:** The application uses "Techno-Neutrals" (Matte Charcoal, Signal Gray). The signature **Braun Orange** is strictly reserved for the primary Play/Pause action and active states.
+
+---
+
+## 4. Data Model
 
 ### Audio Channels (Persisted in Room)
 Every audio source is treated as an `AudioChannel`.

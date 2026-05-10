@@ -5,8 +5,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,12 +16,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.*
 import androidx.compose.runtime.*
@@ -36,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,6 +61,240 @@ enum class NavigationDestination {
 
 enum class PodcastNavigation {
     DASHBOARD, SHOW_DETAIL, EPISODE_DETAIL
+}
+
+data class PlayerUIState(
+    val title: String,
+    val artist: String? = null,
+    val subtitle: String? = null,
+    val positionMs: Long = 0,
+    val durationMs: Long = 0,
+    val isPlaying: Boolean = false,
+    val playbackSpeed: Float? = null,
+    val description: String? = null,
+    val shuffleEnabled: Boolean = false,
+    val repeatEnabled: Boolean = false,
+    val canSeek: Boolean = true,
+    val canChangeSpeed: Boolean = false,
+    val artworkUrl: String? = null,
+    val isDownloaded: Boolean = false,
+    val downloadProgress: Int? = null,
+    val isFinished: Boolean = false,
+    val onDownload: (() -> Unit)? = null,
+    val onMarkPlayed: (() -> Unit)? = null
+)
+
+@Composable
+fun UnifiedPlayer(
+    state: PlayerUIState,
+    onPlayPause: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onSkipBack: () -> Unit = {},
+    onSkipForward: () -> Unit = {},
+    onSpeedChange: (Float) -> Unit = {},
+    onToggleShuffle: () -> Unit = {},
+    onToggleRepeat: () -> Unit = {},
+    onSourceClick: () -> Unit = {}
+) {
+    var showInfo by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
+        // Source Scored Header
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).clickable { onSourceClick() },
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            color = Color.Transparent
+        ) {
+            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("SOURCE:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.width(8.dp))
+                Text(state.subtitle?.uppercase() ?: "KISS AUDIO", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+
+        // Metadata Section with Scored Grid
+        Surface(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            color = Color.Transparent
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(modifier = Modifier.weight(1f)) {
+                    Column(modifier = Modifier.weight(1f).padding(16.dp)) {
+                        Text("ARTIST:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        Text(state.artist?.uppercase() ?: "---", style = MaterialTheme.typography.headlineMedium, maxLines = 2)
+                        
+                        Spacer(Modifier.height(16.dp))
+                        
+                        Text("TRACK:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        Text(state.title.uppercase(), style = MaterialTheme.typography.headlineMedium, maxLines = 3)
+                    }
+                    
+                    // Artwork Placeholder / Image
+                    Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)))
+                    Box(modifier = Modifier.weight(0.6f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                        if (state.artworkUrl != null) {
+                            AsyncImage(model = state.artworkUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Icon(Icons.Default.GraphicEq, null, modifier = Modifier.size(48.dp).alpha(0.1f))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Progress Section - High-Precision Tuner Needle
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            if (state.canSeek) {
+                                val progress = (offset.x / size.width).coerceIn(0f, 1f)
+                                onSeek((progress * state.durationMs).toLong())
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.CenterStart
+            ) {
+                val totalWidth = maxWidth
+                val progress = if (state.durationMs > 0) (state.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+                
+                // Inactive track (hair-thin grey)
+                Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)))
+                
+                // Active track (bolder black/white)
+                Box(modifier = Modifier.fillMaxWidth(progress).height(2.dp).background(MaterialTheme.colorScheme.onBackground))
+                
+                // The Tuner Needle (Tick Mark - Centered)
+                Box(
+                    modifier = Modifier
+                        .offset(x = totalWidth * progress - 0.5.dp)
+                        .width(1.dp)
+                        .height(24.dp)
+                        .background(MaterialTheme.colorScheme.onBackground)
+                )
+            }
+            
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(formatDuration(state.positionMs), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground)
+                Text(formatDuration(state.durationMs), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            }
+        }
+
+        // Primary Controls (Grid Aligned)
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(100.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            color = Color.Transparent
+        ) {
+            Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onPrevious, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    Icon(Icons.Default.SkipPrevious, null, modifier = Modifier.size(32.dp))
+                }
+                Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)))
+                
+                // The Signature Orange Button
+                Box(modifier = Modifier.weight(1.5f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    Surface(
+                        modifier = Modifier.size(72.dp).clickable { onPlayPause() },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        }
+                    }
+                }
+                
+                Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)))
+                IconButton(onClick = onNext, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    Icon(Icons.Default.SkipNext, null, modifier = Modifier.size(32.dp))
+                }
+            }
+        }
+
+        // Secondary Controls
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (state.playbackSpeed != null) {
+                TextButton(onClick = { 
+                    val nextSpeed = when {
+                        state.playbackSpeed < 1.0f -> 1.0f
+                        state.playbackSpeed < 1.5f -> 1.5f
+                        state.playbackSpeed < 2.0f -> 2.0f
+                        else -> 0.8f
+                    }
+                    onSpeedChange(nextSpeed)
+                }, modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${state.playbackSpeed}X", 
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+ else {
+                Spacer(Modifier.weight(1f))
+            }
+            
+            // Podcast specific utilities
+            if (state.onDownload != null) {
+                IconButton(onClick = state.onDownload) {
+                    Icon(
+                        if (state.isDownloaded) Icons.Default.FileDownloadDone else Icons.Default.FileDownload,
+                        null,
+                        tint = if (state.isDownloaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+            
+            if (state.onMarkPlayed != null) {
+                IconButton(onClick = state.onMarkPlayed) {
+                    Icon(
+                        if (state.isFinished) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        null,
+                        tint = if (state.isFinished) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+
+            if (onToggleShuffle != null) {
+                IconButton(onClick = onToggleShuffle) {
+                    Icon(Icons.Default.Shuffle, null, tint = if (state.shuffleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                }
+            }
+            if (onToggleRepeat != null) {
+                IconButton(onClick = onToggleRepeat) {
+                    Icon(Icons.Default.Repeat, null, tint = if (state.repeatEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                }
+            }
+            
+            if (!state.description.isNullOrBlank()) {
+                IconButton(onClick = { showInfo = !showInfo }) {
+                    Icon(Icons.Default.Info, null, tint = if (showInfo) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                }
+            }
+        }
+
+        // Optional Description Field
+        AnimatedVisibility(visible = showInfo && !state.description.isNullOrBlank()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).padding(bottom = 16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                    Text("DESCRIPTION:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    HtmlText(state.description ?: "")
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,7 +324,7 @@ fun PlayerScreen(
     var showFileBrowser by remember { mutableStateOf(false) }
     val pendingMarkPlayed by viewModel.pendingMarkPlayed.collectAsStateWithLifecycle()
     
-    var currentDestination by remember { 
+    var currentDestination: NavigationDestination by remember { 
         mutableStateOf(
             when(appConfig.lastCategory) {
                 "RADIO" -> NavigationDestination.RADIO
@@ -95,15 +334,15 @@ fun PlayerScreen(
         )
     }
 
-    var podcastNav by remember { 
+    var podcastNav: PodcastNavigation by remember { 
         mutableStateOf(
             if (appConfig.lastCategory == "PODCASTS" && appConfig.activePodcastEpisodeId != null) 
                 PodcastNavigation.EPISODE_DETAIL 
             else PodcastNavigation.DASHBOARD
         ) 
     }
-    var cameFromRecent by remember { mutableStateOf(false) }
-    var selectedPodcastId by remember { mutableIntStateOf(appConfig.activePodcastChannelId ?: -1) }
+    var cameFromRecent: Boolean by remember { mutableStateOf(false) }
+    var selectedPodcastId: Int by remember { mutableIntStateOf(appConfig.activePodcastChannelId ?: -1) }
     
     LaunchedEffect(podcastState.activeEpisode?.id) {
         val initialId = podcastState.activeEpisode?.id ?: return@LaunchedEffect
@@ -116,7 +355,7 @@ fun PlayerScreen(
             }
     }
 
-    var isPlayerVisible by remember { 
+    var isPlayerVisible: Boolean by remember { 
         mutableStateOf(
             when (appConfig.lastCategory) {
                 "MUSIC" -> appConfig.activeMusicChannelId != null
@@ -197,25 +436,28 @@ fun PlayerScreen(
             TopAppBar(
                 title = { 
                     Text(
-                        if (isPlayerVisible && currentDestination == NavigationDestination.MUSIC) {
-                            musicState.activeChannel?.name ?: "Player"
+                        text = (if (isPlayerVisible && currentDestination == NavigationDestination.MUSIC) {
+                            musicState.activeChannel?.name ?: "PLAYER"
                         } else {
                             when(currentDestination) {
-                                NavigationDestination.MUSIC -> "Music Decks"
-                                NavigationDestination.RADIO -> "Radio Stations"
+                                NavigationDestination.MUSIC -> "MUSIC DECKS"
+                                NavigationDestination.RADIO -> "RADIO STATIONS"
                                 NavigationDestination.PODCASTS -> {
                                     if (podcastNav == PodcastNavigation.EPISODE_DETAIL) {
-                                        "Now Playing"
+                                        "NOW PLAYING"
                                     } else {
                                         when(podcastNav) {
-                                            PodcastNavigation.DASHBOARD -> "Podcasts"
-                                            PodcastNavigation.SHOW_DETAIL -> allChannels.find { it.id == selectedPodcastId }?.name ?: "Show"
-                                            PodcastNavigation.EPISODE_DETAIL -> "Episode Detail"
+                                            PodcastNavigation.DASHBOARD -> "PODCASTS"
+                                            PodcastNavigation.SHOW_DETAIL -> allChannels.find { it.id == selectedPodcastId }?.name ?: "SHOW"
+                                            PodcastNavigation.EPISODE_DETAIL -> "EPISODE DETAIL"
+                                            else -> "PODCASTS"
                                         }
                                     }
                                 }
                             }
-                        }
+                        }).uppercase(),
+                        style = MaterialTheme.typography.titleLarge,
+                        letterSpacing = 1.sp
                     )
                 },
                 navigationIcon = {
@@ -259,8 +501,9 @@ fun PlayerScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
         },
@@ -278,28 +521,30 @@ fun PlayerScreen(
                         exit = slideOutVertically { it } + fadeOut()
                     ) {
                         Surface(
-                            tonalElevation = 8.dp,
-                            modifier = Modifier.clickable { 
-                                val channel = allChannels.find { it.id == activeChannelId }
-                                if (channel?.type == ChannelType.FOLDER) {
-                                    currentDestination = NavigationDestination.MUSIC
-                                    isPlayerVisible = true
-                                } else if (channel?.type == ChannelType.PODCAST) {
-                                    currentDestination = NavigationDestination.PODCASTS
-                                    podcastNav = PodcastNavigation.EPISODE_DETAIL
-                                    isPlayerVisible = false
-                                } else if (channel?.type == ChannelType.RADIO) {
-                                    currentDestination = NavigationDestination.RADIO
-                                    isPlayerVisible = false
+                            modifier = Modifier
+                                .clickable { 
+                                    val channel = allChannels.find { it.id == activeChannelId }
+                                    if (channel?.type == ChannelType.FOLDER) {
+                                        currentDestination = NavigationDestination.MUSIC
+                                        isPlayerVisible = true
+                                    } else if (channel?.type == ChannelType.PODCAST) {
+                                        currentDestination = NavigationDestination.PODCASTS
+                                        podcastNav = PodcastNavigation.EPISODE_DETAIL
+                                        isPlayerVisible = false
+                                    } else if (channel?.type == ChannelType.RADIO) {
+                                        currentDestination = NavigationDestination.RADIO
+                                        isPlayerVisible = false
+                                    }
                                 }
-                            },
-                            color = MaterialTheme.colorScheme.secondaryContainer
+                                .fillMaxWidth()
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            color = MaterialTheme.colorScheme.surface
                         ) {
                             val miniPlayerTitle = when(appConfig.lastCategory) {
                                 "MUSIC" -> musicState.currentTrackName
-                                "RADIO" -> radioState.streamMetadata ?: "Radio"
-                                "PODCASTS" -> podcastState.currentTrackName.ifEmpty { podcastState.activeEpisode?.title ?: "Podcast" }
-                                else -> "Total Audio Hub"
+                                "RADIO" -> radioState.streamMetadata ?: "RADIO"
+                                "PODCASTS" -> podcastState.currentTrackName.ifEmpty { podcastState.activeEpisode?.title ?: "PODCAST" }
+                                else -> "KISS AUDIO"
                             }
                             val miniPlayerArtist = when(appConfig.lastCategory) {
                                 "MUSIC" -> musicState.currentTrackArtist
@@ -313,12 +558,14 @@ fun PlayerScreen(
                                 else -> 0f
                             }
 
-                            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary)
-                                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                                    Text(miniPlayerTitle, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (!miniPlayerArtist.isNullOrBlank()) Text(miniPlayerArtist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (miniPlayerProgress > 0) LinearProgressIndicator(progress = { miniPlayerProgress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp))
+                            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                // Status light
+                                Box(modifier = Modifier.size(8.dp).background(if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape))
+                                
+                                Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
+                                    Text(miniPlayerTitle.uppercase(), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (!miniPlayerArtist.isNullOrBlank()) Text(miniPlayerArtist.uppercase(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (miniPlayerProgress > 0) LinearProgressIndicator(progress = { miniPlayerProgress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                                 }
                                 IconButton(onClick = { 
                                     if (currentDestination == NavigationDestination.PODCASTS && podcastState.activeEpisode != null && activeChannelId != podcastState.activeEpisode?.channelId) {
@@ -326,12 +573,16 @@ fun PlayerScreen(
                                     } else {
                                         viewModel.playPause()
                                     }
-                                }) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null) }
+                                }) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) }
                             }
                         }
                     }
                 }
-                NavigationBar {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    contentColor = MaterialTheme.colorScheme.outline,
+                    tonalElevation = 0.dp
+                ) {
                     NavigationBarItem(
                         selected = currentDestination == NavigationDestination.MUSIC, 
                         onClick = { 
@@ -342,7 +593,14 @@ fun PlayerScreen(
                             }
                         }, 
                         icon = { Icon(Icons.Default.LibraryMusic, null) }, 
-                        label = { Text("Music") }
+                        label = { Text("MUSIC", style = MaterialTheme.typography.labelSmall) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                            selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                            indicatorColor = Color.Transparent,
+                            unselectedIconColor = MaterialTheme.colorScheme.outline,
+                            unselectedTextColor = MaterialTheme.colorScheme.outline
+                        )
                     )
                     NavigationBarItem(
                         selected = currentDestination == NavigationDestination.RADIO, 
@@ -354,7 +612,14 @@ fun PlayerScreen(
                             }
                         }, 
                         icon = { Icon(Icons.Default.Radio, null) }, 
-                        label = { Text("Radio") }
+                        label = { Text("RADIO", style = MaterialTheme.typography.labelSmall) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                            selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                            indicatorColor = Color.Transparent,
+                            unselectedIconColor = MaterialTheme.colorScheme.outline,
+                            unselectedTextColor = MaterialTheme.colorScheme.outline
+                        )
                     )
                     NavigationBarItem(
                         selected = currentDestination == NavigationDestination.PODCASTS, 
@@ -367,7 +632,14 @@ fun PlayerScreen(
                             }
                         }, 
                         icon = { Icon(Icons.Default.Podcasts, null) }, 
-                        label = { Text("Podcasts") }
+                        label = { Text("PODCASTS", style = MaterialTheme.typography.labelSmall) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                            selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                            indicatorColor = Color.Transparent,
+                            unselectedIconColor = MaterialTheme.colorScheme.outline,
+                            unselectedTextColor = MaterialTheme.colorScheme.outline
+                        )
                     )
                 }
             }
@@ -390,6 +662,8 @@ fun PlayerScreen(
                         currentTrackArtist = musicState.currentTrackArtist,
                         currentTrackAlbum = musicState.currentTrackAlbum,
                         currentTrackIndex = musicState.currentTrackIndex,
+                        shuffleEnabled = musicState.shuffleEnabled,
+                        repeatEnabled = musicState.repeatEnabled,
                         onChannelClick = { viewModel.selectChannel(it); isPlayerVisible = true },
                         onDeleteChannel = { viewModel.deleteChannel(it) },
                         onRenameChannel = { id, name -> viewModel.renameChannel(id, name) },
@@ -429,7 +703,9 @@ fun PlayerScreen(
                         onRenameChannel = { id, name -> viewModel.renameChannel(id, name) },
                         onUrlUpdate = { id, url -> viewModel.setRadioUrl(id, url) },
                         onCreateChannel = { showAddStation = true },
-                        onBulkImport = { showBulkImport = true }
+                        onBulkImport = { showBulkImport = true },
+                        onPlayPause = { viewModel.playPause() },
+                        onStop = { viewModel.stopRadio() }
                     )
                 }
                 NavigationDestination.PODCASTS -> {
@@ -495,7 +771,10 @@ fun PlayerScreen(
                                             viewModel.markEpisodeAsPlayed(it)
                                             podcastNav = if (cameFromRecent) PodcastNavigation.DASHBOARD else PodcastNavigation.SHOW_DETAIL
                                         },
-                                        onMarkUnplayed = { viewModel.markEpisodeAsUnplayed(it) }
+                                        onMarkUnplayed = { viewModel.markEpisodeAsUnplayed(it) },
+                                        onSourceClick = { 
+                                            podcastNav = if (cameFromRecent) PodcastNavigation.DASHBOARD else PodcastNavigation.SHOW_DETAIL
+                                        }
                                     )
                                 }
                             }
@@ -541,64 +820,110 @@ fun PlayerScreen(
     }
 
 @Composable
-fun MusicDashboard(channels: List<AudioChannel>, isLoading: Boolean, activeChannelId: Int?, isPlaying: Boolean, currentPositionMs: Long, currentDurationMs: Long, isPlayerVisible: Boolean, activeChannel: AudioChannel?, audioFiles: List<com.michael.kissaudio.scanner.AudioFile>, currentTrackName: String, currentTrackArtist: String?, currentTrackAlbum: String?, currentTrackIndex: Int, onChannelClick: (Int) -> Unit, onDeleteChannel: (Int) -> Unit, onRenameChannel: (Int, String) -> Unit, onCreateChannel: () -> Unit, onFolderPick: () -> Unit, onPlayFileIndex: (Int) -> Unit, onToggleFileBrowser: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit, onToggleShuffle: () -> Unit, onToggleRepeat: () -> Unit) {
+fun MusicDashboard(channels: List<AudioChannel>, isLoading: Boolean, activeChannelId: Int?, isPlaying: Boolean, currentPositionMs: Long, currentDurationMs: Long, isPlayerVisible: Boolean, activeChannel: AudioChannel?, audioFiles: List<com.michael.kissaudio.scanner.AudioFile>, currentTrackName: String, currentTrackArtist: String?, currentTrackAlbum: String?, currentTrackIndex: Int, shuffleEnabled: Boolean, repeatEnabled: Boolean, onChannelClick: (Int) -> Unit, onDeleteChannel: (Int) -> Unit, onRenameChannel: (Int, String) -> Unit, onCreateChannel: () -> Unit, onFolderPick: () -> Unit, onPlayFileIndex: (Int) -> Unit, onToggleFileBrowser: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit, onToggleShuffle: () -> Unit, onToggleRepeat: () -> Unit) {
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
-            Text("Scanning folder...", modifier = Modifier.padding(top = 80.dp))
+            Text("SCANNING FOLDER...", modifier = Modifier.padding(top = 80.dp), style = MaterialTheme.typography.labelSmall)
         }
     } else if (isPlayerVisible && activeChannel != null) {
-        Box(modifier = Modifier.padding(16.dp)) {
-            FolderPlayer(activeChannel, audioFiles, isPlaying && activeChannelId == activeChannel.id, if (activeChannelId == activeChannel.id) currentTrackName else activeChannel.currentTrackTitle ?: "", if (activeChannelId == activeChannel.id) currentTrackArtist else activeChannel.currentTrackArtist, if (activeChannelId == activeChannel.id) currentTrackAlbum else activeChannel.currentTrackAlbum, currentTrackIndex, if (activeChannelId == activeChannel.id) currentPositionMs else activeChannel.currentPositionMs, if (activeChannelId == activeChannel.id) currentDurationMs else activeChannel.currentTrackDurationMs, false, true, onFolderPick, onToggleFileBrowser, onPlayPause, onNext, onPrevious, onSeek, onToggleShuffle, onToggleRepeat)
-        }
+        val uiState = PlayerUIState(
+            title = if (activeChannelId == activeChannel.id) currentTrackName else activeChannel.currentTrackTitle ?: "READY",
+            artist = if (activeChannelId == activeChannel.id) currentTrackArtist else activeChannel.currentTrackArtist,
+            subtitle = activeChannel.name,
+            positionMs = if (activeChannelId == activeChannel.id) currentPositionMs else activeChannel.currentPositionMs,
+            durationMs = if (activeChannelId == activeChannel.id) currentDurationMs else activeChannel.currentTrackDurationMs,
+            isPlaying = isPlaying && activeChannelId == activeChannel.id,
+            shuffleEnabled = shuffleEnabled,
+            repeatEnabled = repeatEnabled
+        )
+        UnifiedPlayer(
+            state = uiState,
+            onPlayPause = onPlayPause,
+            onSeek = onSeek,
+            onNext = onNext,
+            onPrevious = onPrevious,
+            onToggleShuffle = onToggleShuffle,
+            onToggleRepeat = onToggleRepeat,
+            onSourceClick = onToggleFileBrowser
+        )
     } else if (channels.isEmpty()) {
-        EmptyState("No music decks yet", Icons.Default.LibraryMusic, onCreateChannel)
+        EmptyState("NO MUSIC DECKS YET", Icons.Default.LibraryMusic, onCreateChannel)
     } else {
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             items(channels) { channel ->
                 val isActive = channel.id == activeChannelId
                 DeckCard(channel, isActive, isActive && isPlaying, if (isActive) currentPositionMs else channel.currentPositionMs, if (isActive && currentDurationMs > 0) currentDurationMs else channel.currentTrackDurationMs, { onChannelClick(channel.id) }, { onDeleteChannel(channel.id) }, { onRenameChannel(channel.id, it) })
             }
-            item { AddButton("Add New Music Deck", onCreateChannel) }
+            item { AddButton("ADD NEW MUSIC DECK", onCreateChannel) }
         }
     }
 }
 
 @Composable
-fun RadioDashboard(channels: List<AudioChannel>, activeChannelId: Int?, isPlaying: Boolean, streamMetadata: String?, onChannelClick: (Int) -> Unit, onDeleteChannel: (Int) -> Unit, onRenameChannel: (Int, String) -> Unit, onUrlUpdate: (Int, String) -> Unit, onCreateChannel: () -> Unit, onBulkImport: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        if (channels.isEmpty()) {
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Radio, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
-                    Text("No radio stations yet", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 16.dp))
-                }
-            }
-        } else {
-            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(channels) { channel ->
-                    val isActive = channel.id == activeChannelId
-                    RadioCard(
-                        channel = channel,
-                        isActive = isActive,
-                        isPlaying = isActive && isPlaying,
-                        status = if (isActive && isPlaying) streamMetadata ?: "Streaming..." else "Live Station",
-                        onClick = { onChannelClick(channel.id) },
-                        onDelete = { onDeleteChannel(channel.id) },
-                        onRename = { newName -> onRenameChannel(channel.id, newName) },
-                        onUrlUpdate = { newUrl -> onUrlUpdate(channel.id, newUrl) }
-                    )
-                }
-            }
-        }
+fun RadioDashboard(channels: List<AudioChannel>, activeChannelId: Int?, isPlaying: Boolean, streamMetadata: String?, onChannelClick: (Int) -> Unit, onDeleteChannel: (Int) -> Unit, onRenameChannel: (Int, String) -> Unit, onUrlUpdate: (Int, String) -> Unit, onCreateChannel: () -> Unit, onBulkImport: () -> Unit, onPlayPause: () -> Unit, onStop: () -> Unit) {
+    var showPlayer by remember { mutableStateOf(false) }
+    val activeChannel = channels.find { it.id == activeChannelId }
 
-        Spacer(Modifier.height(16.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AddButton("Add New", onCreateChannel, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = onBulkImport, modifier = Modifier.weight(1f).height(80.dp)) { 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.CloudUpload, null)
-                    Text("Bulk Import", style = MaterialTheme.typography.labelSmall)
+    if (showPlayer && activeChannel != null) {
+        val uiState = PlayerUIState(
+            title = streamMetadata ?: "LIVE STREAM",
+            artist = "RADIO STATION",
+            subtitle = activeChannel.name,
+            isPlaying = isPlaying,
+            canSeek = false
+        )
+        UnifiedPlayer(
+            state = uiState,
+            onPlayPause = onPlayPause,
+            onSeek = {},
+            onNext = {},
+            onPrevious = {},
+            onSourceClick = { showPlayer = false }
+        )
+        BackHandler { showPlayer = false }
+    } else {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            if (channels.isEmpty()) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Radio, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.outline)
+                        Text("NO RADIO STATIONS YET", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 16.dp))
+                    }
+                }
+            } else {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    items(channels) { channel ->
+                        val isActive = channel.id == activeChannelId
+                        RadioCard(
+                            channel = channel,
+                            isActive = isActive,
+                            isPlaying = isActive && isPlaying,
+                            status = if (isActive && isPlaying) streamMetadata ?: "STREAMING..." else "LIVE STATION",
+                            onClick = { 
+                                if (isActive) {
+                                    showPlayer = true
+                                } else {
+                                    onChannelClick(channel.id)
+                                    showPlayer = true
+                                }
+                            },
+                            onDelete = { onDeleteChannel(channel.id) },
+                            onRename = { newName -> onRenameChannel(channel.id, newName) },
+                            onUrlUpdate = { newUrl -> onUrlUpdate(channel.id, newUrl) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AddButton("ADD NEW", onCreateChannel, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onBulkImport, modifier = Modifier.weight(1f).height(80.dp), shape = RoundedCornerShape(2.dp)) { 
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.CloudUpload, null)
+                        Text("BULK IMPORT", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
@@ -611,32 +936,112 @@ fun DeckCard(channel: AudioChannel, isActive: Boolean, isPlaying: Boolean, pos: 
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameInput by remember { mutableStateOf(channel.name ?: "") }
 
-    Card(modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onTap = { onClick() }, onLongPress = { showMenu = true }) }, elevation = CardDefaults.cardElevation(if (isActive) 8.dp else 2.dp), colors = CardDefaults.cardColors(if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
+    val borderColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+    val backgroundColor = if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f) else Color.Transparent
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }, onLongPress = { showMenu = true }) }
+            .padding(vertical = 4.dp),
+        color = backgroundColor,
+        border = BorderStroke(1.dp, borderColor),
+        shape = RoundedCornerShape(2.dp) // Sharp, precise corners
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (isPlaying) Icons.Default.PauseCircle else Icons.Default.PlayCircle, null, tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
+                // Functional Indicator (Braun Orange Circle when active)
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(
+                            if (isActive) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            CircleShape
+                        )
+                        .border(
+                            1.dp, 
+                            if (isActive) Color.Transparent else MaterialTheme.colorScheme.outline,
+                            CircleShape
+                        )
+                )
+                
                 Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
-                    Text(channel.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(channel.folderDisplayName ?: "No folder", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                    Text(
+                        text = channel.name.uppercase(), 
+                        style = MaterialTheme.typography.titleLarge,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = channel.folderDisplayName?.uppercase() ?: "NO SOURCE", 
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                
+                if (isPlaying) {
+                    Icon(
+                        Icons.Default.GraphicEq, 
+                        null, 
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
+            
+            Spacer(Modifier.height(16.dp))
+            
+            Text(
+                text = channel.currentTrackTitle ?: "---", 
+                style = MaterialTheme.typography.bodyLarge, 
+                maxLines = 1, 
+                overflow = TextOverflow.Ellipsis
+            )
+            
+            if (!channel.currentTrackArtist.isNullOrBlank()) {
+                Text(
+                    text = channel.currentTrackArtist.uppercase(), 
+                    style = MaterialTheme.typography.labelSmall, 
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1, 
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            
             Spacer(Modifier.height(12.dp))
-            Text(channel.currentTrackTitle ?: "No track playing", style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!channel.currentTrackArtist.isNullOrBlank()) Text(channel.currentTrackArtist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            LinearProgressIndicator(progress = { if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatDuration(pos), style = MaterialTheme.typography.bodySmall); Text(formatDuration(dur), style = MaterialTheme.typography.bodySmall)
+            
+            // Precision Progress Bar
+            Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))) {
+                val progress = if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .fillMaxHeight()
+                        .background(if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                )
+            }
+            
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp), 
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(formatDuration(pos), style = MaterialTheme.typography.bodySmall)
+                Text(formatDuration(dur), style = MaterialTheme.typography.bodySmall)
             }
         }
         
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(text = { Text("Rename") }, onClick = { showRenameDialog = true; showMenu = false }, leadingIcon = { Icon(Icons.Default.Edit, null) })
-            DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { onDelete(); showMenu = false }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) })
+            DropdownMenuItem(text = { Text("RENAME") }, onClick = { showRenameDialog = true; showMenu = false })
+            DropdownMenuItem(text = { Text("DELETE", color = MaterialTheme.colorScheme.error) }, onClick = { onDelete(); showMenu = false })
         }
     }
     
     if (showRenameDialog) {
-        AlertDialog(onDismissRequest = { showRenameDialog = false }, title = { Text("Rename Deck") }, text = { OutlinedTextField(value = renameInput, onValueChange = { renameInput = it }) }, confirmButton = { Button(onClick = { onRename(renameInput); showRenameDialog = false }) { Text("Save") } })
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false }, 
+            title = { Text("RENAME DECK") }, 
+            text = { OutlinedTextField(value = renameInput, onValueChange = { renameInput = it }, singleLine = true) }, 
+            confirmButton = { TextButton(onClick = { onRename(renameInput); showRenameDialog = false }) { Text("SAVE") } }
+        )
     }
 }
 
@@ -648,25 +1053,69 @@ fun RadioCard(channel: AudioChannel, isActive: Boolean, isPlaying: Boolean, stat
     var renameInput by remember { mutableStateOf(channel.name ?: "") }
     var urlInput by remember { mutableStateOf(channel.streamUrl ?: "") }
 
-    Card(modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onTap = { onClick() }, onLongPress = { showMenu = true }) }, elevation = CardDefaults.cardElevation(if (isActive) 8.dp else 2.dp), colors = CardDefaults.cardColors(if (isActive) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
+    val borderColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+    val backgroundColor = if (isActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f) else Color.Transparent
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }, onLongPress = { showMenu = true }) }
+            .padding(vertical = 4.dp),
+        color = backgroundColor,
+        border = BorderStroke(1.dp, borderColor),
+        shape = RoundedCornerShape(2.dp)
+    ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (isActive && isPlaying) Icons.Default.StopCircle else Icons.Default.PlayCircle, null, tint = if (isActive) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(56.dp))
+            // Functional Indicator
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .background(
+                        if (isActive) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        CircleShape
+                    )
+                    .border(
+                        1.dp, 
+                        if (isActive) Color.Transparent else MaterialTheme.colorScheme.outline,
+                        CircleShape
+                    )
+            )
+
             Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
-                Text(channel.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(status, style = MaterialTheme.typography.bodyMedium, color = if (isActive) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = channel.name.uppercase(), 
+                    style = MaterialTheme.typography.titleLarge,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = status.uppercase(), 
+                    style = MaterialTheme.typography.labelSmall, 
+                    color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    maxLines = 1, 
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            
+            if (isActive && isPlaying) {
+                Icon(
+                    Icons.Default.GraphicEq, 
+                    null, 
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(text = { Text("Rename") }, onClick = { showRenameDialog = true; showMenu = false })
-            DropdownMenuItem(text = { Text("Edit URL") }, onClick = { showUrlDialog = true; showMenu = false })
-            DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { onDelete(); showMenu = false })
+            DropdownMenuItem(text = { Text("RENAME") }, onClick = { showRenameDialog = true; showMenu = false })
+            DropdownMenuItem(text = { Text("EDIT URL") }, onClick = { showUrlDialog = true; showMenu = false })
+            DropdownMenuItem(text = { Text("DELETE", color = MaterialTheme.colorScheme.error) }, onClick = { onDelete(); showMenu = false })
         }
     }
     if (showRenameDialog) {
-        AlertDialog(onDismissRequest = { showRenameDialog = false }, title = { Text("Rename Station") }, text = { OutlinedTextField(value = renameInput, onValueChange = { renameInput = it }, label = { Text("Station Name") }) }, confirmButton = { Button(onClick = { onRename(renameInput); showRenameDialog = false }) { Text("Save") } }, dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") } })
+        AlertDialog(onDismissRequest = { showRenameDialog = false }, title = { Text("RENAME STATION") }, text = { OutlinedTextField(value = renameInput, onValueChange = { renameInput = it }, label = { Text("STATION NAME") }, singleLine = true) }, confirmButton = { TextButton(onClick = { onRename(renameInput); showRenameDialog = false }) { Text("SAVE") } })
     }
     if (showUrlDialog) {
-        AlertDialog(onDismissRequest = { showUrlDialog = false }, title = { Text("Edit Stream URL") }, text = { OutlinedTextField(value = urlInput, onValueChange = { urlInput = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth()) }, confirmButton = { Button(onClick = { onUrlUpdate(urlInput); showUrlDialog = false }) { Text("Save") } }, dismissButton = { TextButton(onClick = { showUrlDialog = false }) { Text("Cancel") } })
+        AlertDialog(onDismissRequest = { showUrlDialog = false }, title = { Text("EDIT STREAM URL") }, text = { OutlinedTextField(value = urlInput, onValueChange = { urlInput = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth()) }, confirmButton = { TextButton(onClick = { onUrlUpdate(urlInput); showUrlDialog = false }) { Text("SAVE") } })
     }
 }
 
@@ -676,19 +1125,34 @@ fun PodcastCard(channel: AudioChannel, onClick: () -> Unit, onDelete: () -> Unit
     var showUrlDialog by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf(channel.streamUrl ?: "") }
 
-    Card(modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures(onTap = { onClick() }, onLongPress = { showMenu = true }) }) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) { detectTapGestures(onTap = { onClick() }, onLongPress = { showMenu = true }) }
+            .padding(vertical = 4.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+        shape = RoundedCornerShape(2.dp)
+    ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Podcasts, null, modifier = Modifier.size(48.dp))
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+            )
             Spacer(Modifier.width(16.dp))
-            Text(channel.name, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = channel.name.uppercase(), 
+                style = MaterialTheme.typography.titleLarge,
+                letterSpacing = 1.sp
+            )
         }
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(text = { Text("Edit RSS URL") }, onClick = { showUrlDialog = true; showMenu = false })
-            DropdownMenuItem(text = { Text("Delete", color = MaterialTheme.colorScheme.error) }, onClick = { onDelete(); showMenu = false })
+            DropdownMenuItem(text = { Text("EDIT RSS URL") }, onClick = { showUrlDialog = true; showMenu = false })
+            DropdownMenuItem(text = { Text("DELETE", color = MaterialTheme.colorScheme.error) }, onClick = { onDelete(); showMenu = false })
         }
     }
     if (showUrlDialog) {
-        AlertDialog(onDismissRequest = { showUrlDialog = false }, title = { Text("Edit RSS URL") }, text = { OutlinedTextField(value = urlInput, onValueChange = { urlInput = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth()) }, confirmButton = { Button(onClick = { onUrlUpdate(urlInput); showUrlDialog = false }) { Text("Save") } }, dismissButton = { TextButton(onClick = { showUrlDialog = false }) { Text("Cancel") } })
+        AlertDialog(onDismissRequest = { showUrlDialog = false }, title = { Text("EDIT RSS URL") }, text = { OutlinedTextField(value = urlInput, onValueChange = { urlInput = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth()) }, confirmButton = { TextButton(onClick = { onUrlUpdate(urlInput); showUrlDialog = false }) { Text("SAVE") } })
     }
 }
 
@@ -774,44 +1238,6 @@ fun RadioSearchDialog(results: List<com.michael.kissaudio.ui.RadioStationResult>
             }
         }
     })
-}
-
-@Composable
-fun FolderPlayer(activeChannel: AudioChannel, audioFiles: List<com.michael.kissaudio.scanner.AudioFile>, isPlaying: Boolean, currentTrackName: String, currentTrackArtist: String?, currentTrackAlbum: String?, currentTrackIndex: Int, currentPositionMs: Long, durationMs: Long, shuffleEnabled: Boolean, repeatEnabled: Boolean, onFolderPick: () -> Unit, onToggleFileBrowser: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit, onToggleShuffle: () -> Unit, onToggleRepeat: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant)) {
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(modifier = Modifier.weight(1f).clickable { onToggleFileBrowser() }, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary)
-                    Column(modifier = Modifier.padding(start = 12.dp)) {
-                        Text(activeChannel.folderDisplayName ?: "No folder", style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-                        if (audioFiles.isNotEmpty()) Text("${audioFiles.size} tracks", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                FilledTonalButton(onClick = onFolderPick) { Text("Change") }
-            }
-        }
-        Spacer(Modifier.weight(1f))
-        Text(currentTrackName.ifEmpty { activeChannel.currentTrackTitle ?: "Ready" }, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center, maxLines = 2, modifier = Modifier.fillMaxWidth())
-        if (!currentTrackArtist.isNullOrBlank()) {
-            Text(currentTrackArtist, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center, maxLines = 1, modifier = Modifier.fillMaxWidth())
-        }
-        if (!currentTrackAlbum.isNullOrBlank()) {
-            Text(currentTrackAlbum, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center, maxLines = 1, modifier = Modifier.fillMaxWidth())
-        }
-        Spacer(Modifier.height(32.dp))
-        Slider(value = if (durationMs > 0) (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f, onValueChange = { onSeek((it * durationMs).toLong()) })
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(formatDuration(currentPositionMs)); Text(formatDuration(durationMs)) }
-        Spacer(Modifier.height(24.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onToggleShuffle) { Icon(Icons.Default.Shuffle, null, tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-            IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, null, modifier = Modifier.size(48.dp)) }
-            FilledIconButton(onClick = onPlayPause, modifier = Modifier.size(80.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(48.dp)) }
-            IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null, modifier = Modifier.size(48.dp)) }
-            IconButton(onClick = onToggleRepeat) { Icon(Icons.Default.Repeat, null, tint = if (repeatEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-        Spacer(Modifier.weight(1f))
-    }
 }
 
 @Composable
@@ -967,7 +1393,7 @@ fun PodcastDashboard(
                         }
                     }
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(recentEpisodes, key = { it.id }) { episode ->
                             if (episode.id in pendingMarkPlayed) {
                                 UndoItem(episode.title, onUndo = { onUndoMarkPlayed(episode.id) })
@@ -1069,19 +1495,20 @@ fun PodcastShowDetail(
 
 @Composable
 fun UndoItem(title: String, onUndo: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
     ) {
-        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.onTertiaryContainer)
-            Spacer(Modifier.width(12.dp))
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Marked played", style = MaterialTheme.typography.labelLarge)
-                Text(title, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("MARKED AS PLAYED", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                Text(title.uppercase(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Button(onClick = onUndo, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)) {
-                Text("UNDO")
+            TextButton(onClick = onUndo) {
+                Text("UNDO", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -1101,56 +1528,84 @@ fun EpisodeListItem(episode: com.michael.kissaudio.data.PodcastEpisode, onClick:
     SwipeToDismissBox(
         state = dismissState,
         backgroundContent = {
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 20.dp), contentAlignment = Alignment.CenterEnd) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)).padding(horizontal = 20.dp), contentAlignment = Alignment.CenterEnd) {
                 Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
             }
         }
     ) {
-        val alpha = if (episode.isFinished) 0.5f else 1.0f
-        Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clickable { onClick() }) {
-            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Play button with circular progress
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp).clickable { onPlay() }) {
-                    val progress = if (episode.durationMs > 0) (1f - (episode.playbackPositionMs.toFloat() / episode.durationMs.toFloat())).coerceIn(0f, 1f) else 1f
-                    CircularProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxSize().rotate(-90f), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.surfaceVariant)
-                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(24.dp))
-                }
-
-                Spacer(Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f).alpha(alpha)) {
-                    episode.podcastTitle?.let { title ->
-                        Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+        val alpha = if (episode.isFinished) 0.4f else 1.0f
+        
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() },
+            color = MaterialTheme.colorScheme.background // Use solid background to hide swipe-action ghosting
+        ) {
+            Column {
+                Row(modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Play button with subtle status
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(40.dp).clickable { onPlay() }) {
+                        val progress = if (episode.durationMs > 0) (episode.playbackPositionMs.toFloat() / episode.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+                        
+                        // Circular track status (very thin)
+                        CircularProgressIndicator(
+                            progress = { progress }, 
+                            modifier = Modifier.fillMaxSize(), 
+                            strokeWidth = 1.dp, 
+                            color = MaterialTheme.colorScheme.primary, 
+                            trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+                        Icon(
+                            if (episode.isFinished) Icons.Default.Check else Icons.Default.PlayArrow, 
+                            null, 
+                            modifier = Modifier.size(20.dp),
+                            tint = if (episode.isFinished) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
+                        )
                     }
-                    Text(episode.title, style = MaterialTheme.typography.titleSmall, maxLines = 2)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (episode.isDownloaded) {
-                            Icon(Icons.Default.CheckCircle, null, tint = Color.Green, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
+
+                    Spacer(Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f).alpha(alpha)) {
+                        episode.podcastTitle?.let { title ->
+                            Text(title.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1)
                         }
-                        val statusText = when {
-                            episode.isFinished -> "Played"
-                            episode.isDownloading -> "Downloading..."
-                            episode.isQueued -> "Queued"
-                            else -> if (episode.isDownloaded) "" else "Available"
+                        Text(episode.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, fontWeight = FontWeight.Medium)
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                            if (episode.isDownloaded) {
+                                Icon(Icons.Default.DownloadDone, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            val statusText = when {
+                                episode.isDownloading -> "DOWNLOADING ${episode.downloadProgress}%"
+                                episode.isQueued -> "QUEUED"
+                                else -> formatDateToDaysAgo(episode.pubDate).uppercase()
+                            }
+                            Text(statusText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                         }
-                        if (statusText.isNotEmpty()) {
-                            Text(statusText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(formatDateToDaysAgo(episode.pubDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                    }
+
+                    if (!episode.isFinished && episode.durationMs > 0) {
+                        Text(
+                            text = formatTimeRemaining(episode.durationMs - episode.playbackPositionMs), 
+                            style = MaterialTheme.typography.labelSmall, 
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
                     }
                 }
-
-                if (!episode.isFinished && episode.durationMs > 0) {
-                    Text(formatTimeRemaining(episode.durationMs - episode.playbackPositionMs), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                
+                // Bottom scoring line
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                
+                if (episode.isDownloading || episode.isQueued) {
+                    LinearProgressIndicator(
+                        progress = { if (episode.isDownloading) episode.downloadProgress / 100f else 0f },
+                        modifier = Modifier.fillMaxWidth().height(1.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = Color.Transparent
+                    )
                 }
-            }
-            if (episode.isDownloading || episode.isQueued) {
-                LinearProgressIndicator(
-                    progress = { if (episode.isDownloading) episode.downloadProgress / 100f else 0f },
-                    modifier = Modifier.fillMaxWidth().height(2.dp)
-                )
             }
         }
     }
@@ -1173,105 +1628,40 @@ fun EpisodeDetailScreen(
     onDownload: (com.michael.kissaudio.data.PodcastEpisode) -> Unit,
     onDelete: (com.michael.kissaudio.data.PodcastEpisode) -> Unit,
     onMarkPlayed: (com.michael.kissaudio.data.PodcastEpisode) -> Unit,
-    onMarkUnplayed: (com.michael.kissaudio.data.PodcastEpisode) -> Unit
+    onMarkUnplayed: (com.michael.kissaudio.data.PodcastEpisode) -> Unit,
+    onSourceClick: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text(episode.title, style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(formatDateToDaysAgo(episode.pubDate), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-        Spacer(Modifier.height(16.dp))
+    val uiState = PlayerUIState(
+        title = episode.title,
+        artist = episode.podcastTitle ?: "PODCAST",
+        subtitle = episode.podcastTitle ?: "PODCAST",
+        positionMs = if (isActive) currentPositionMs else episode.playbackPositionMs,
+        durationMs = if (isActive && durationMs > 0) durationMs else episode.durationMs,
+        isPlaying = isActive && isPlaying,
+        playbackSpeed = playbackSpeed,
+        description = episode.description,
+        canChangeSpeed = true,
+        isDownloaded = episode.isDownloaded,
+        downloadProgress = if (episode.isDownloading) episode.downloadProgress else null,
+        isFinished = episode.isFinished,
+        onDownload = { if (!episode.isDownloaded && !episode.isDownloading) onDownload(episode) else if (episode.isDownloaded) onDelete(episode) },
+        onMarkPlayed = { if (episode.isFinished) onMarkUnplayed(episode) else onMarkPlayed(episode) }
+    )
 
-        if (isActive) {
-            PodcastPlayer(
-                activeEpisode = episode,
-                isPlaying = isPlaying,
-                playbackSpeed = playbackSpeed,
-                currentPositionMs = currentPositionMs,
-                durationMs = if (durationMs > 0) durationMs else episode.durationMs,
-                onPlayPause = { if (isPlaying) onPause() else onPlay(episode) },
-                onSkipBack = onSkipBack,
-                onSkipForward = onSkipForward,
-                onSeek = onSeek,
-                onSpeedChange = onSpeedChange,
-                showTitle = false
-            )
-            Spacer(Modifier.height(16.dp))
-        }
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (episode.isDownloaded) {
-                if (!isActive) {
-                    Button(onClick = { onPlay(episode) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Play") }
-                }
-            } else if (episode.isDownloading || episode.isQueued) {
-                Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { 
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (episode.isQueued) "Queued" else "Downloading ${episode.downloadProgress}%")
-                }
-            } else {
-                if (!isActive) {
-                    Button(onClick = { onDownload(episode) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("Download") }
-                    OutlinedButton(onClick = { onPlay(episode) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Stream") }
-                } else {
-                    Button(onClick = { onDownload(episode) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("Download") }
-                }
-            }
-        }
-        
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { if (episode.isFinished) onMarkUnplayed(episode) else onMarkPlayed(episode) },
-            modifier = Modifier.fillMaxWidth()
-        ) { 
-            Icon(if (episode.isFinished) Icons.Default.Replay else Icons.Default.Check, null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (episode.isFinished) "Mark Unplayed" else "Mark Played") 
-        }
-
-        Spacer(Modifier.height(24.dp))
-        Text("Show Notes", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        HtmlText(episode.description ?: "No description available")
-    }
+    UnifiedPlayer(
+        state = uiState,
+        onPlayPause = { if (isActive && isPlaying) onPause() else onPlay(episode) },
+        onSeek = onSeek,
+        onNext = onSkipForward,
+        onPrevious = onSkipBack,
+        onSpeedChange = onSpeedChange,
+        onSourceClick = onSourceClick
+    )
 }
 
 @Composable
 fun PodcastListScreen(channels: List<AudioChannel>, onChannelClick: (Int) -> Unit, onCreateChannel: () -> Unit) {
     // Deprecated in favor of PodcastDashboard
-}
-
-@Composable
-fun PodcastPlayer(activeEpisode: com.michael.kissaudio.data.PodcastEpisode, isPlaying: Boolean, playbackSpeed: Float, currentPositionMs: Long, durationMs: Long, onPlayPause: () -> Unit, onSkipBack: () -> Unit, onSkipForward: () -> Unit, onSeek: (Long) -> Unit, onSpeedChange: (Float) -> Unit, showTitle: Boolean = true) {
-    Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (showTitle) {
-            Text(activeEpisode.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(16.dp))
-        }
-        Slider(value = if (durationMs > 0) (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f, onValueChange = { onSeek((it * durationMs).toLong()) })
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatDuration(currentPositionMs)); Text(formatDuration(durationMs))
-        }
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
-            TextButton(onClick = {
-                val nextSpeed = when {
-                    playbackSpeed < 0.8f -> 0.8f
-                    playbackSpeed < 1.0f -> 1.0f
-                    playbackSpeed < 1.2f -> 1.2f
-                    playbackSpeed < 1.5f -> 1.5f
-                    playbackSpeed < 2.0f -> 2.0f
-                    else -> 0.5f
-                }
-                onSpeedChange(nextSpeed)
-            }) {
-                Text("${playbackSpeed}x", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-            }
-            IconButton(onClick = onSkipBack) { Icon(Icons.Default.Replay10, null, modifier = Modifier.size(48.dp)) } // Using Replay10 as proxy for 15
-            FilledIconButton(onClick = onPlayPause, modifier = Modifier.size(64.dp)) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, modifier = Modifier.size(40.dp)) }
-            IconButton(onClick = onSkipForward) { Icon(Icons.Default.Forward30, null, modifier = Modifier.size(48.dp)) }
-        }
-    }
 }
 
 private fun formatDuration(ms: Long): String {

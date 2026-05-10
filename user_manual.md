@@ -66,8 +66,9 @@ Subscribe to your favorite shows and listen offline.
 
 ---
 
-## 5. Global Controls
-- **Mini-Player:** At the bottom of every screen, a mini-player shows what's currently playing. Tap it to navigate to the detailed player (or episode detail).
+## 5. Global Controls & The "Tonmeister" Player
+- **The Unified Player:** Whether you are listening to a Music Deck, a live Radio Station, or a Podcast, you will use the exact same high-precision interface. It features a "Tuner Needle" progress bar, clear monospace readouts, and contextual controls (e.g., Shuffle only appears for music, Download only for podcasts).
+- **Mini-Player:** At the bottom of every screen, a precise, grid-aligned mini-player shows what's currently playing. Tap it to navigate to the detailed unified player.
 - **Bottom Navigation:** Quickly switch between Music, Radio, and Podcasts using the icons at the bottom.
 
 ---

@@ -64,7 +64,13 @@ class PodcastRepository(private val context: android.content.Context, private va
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .addTag("podcast_download")
                 .build()
-            WorkManager.getInstance(context).enqueue(request)
+            
+            // Use unique work to prevent multiple workers for the same episode ID
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "download_${episode.id}",
+                ExistingWorkPolicy.KEEP, // Keep existing work if already queued
+                request
+            )
         }
     }
 

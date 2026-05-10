@@ -30,6 +30,7 @@ A dedicated, open-source center for your **Music, Radio, and Podcasts.** Built o
 
 ### 🧠 Features Built for Focus
 
+- **The "Tonmeister" Interface**: Inspired by Dieter Rams and classic Braun audio equipment, the UI is a strict, highly-functional grid. It features precision "Tuner Needle" progress bars, monospace data readouts, and a single, signature orange Play button. All audio types (Music, Radio, Podcasts) share this unified, distraction-free player.
 - **Context Persistence**: KISS Audio remembers exactly where you were in every Deck, Station, or Episode. Switch in one tap and never lose your spot.
 - **Dual-Mode Operation**:
   - **App Mode**: Use it as a lightweight, lightning-fast audio player.
