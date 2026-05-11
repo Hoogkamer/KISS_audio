@@ -18,65 +18,23 @@ For every completed item, ensure:
 - [ ] `architecture.md` (especially Chapter 6) is updated if necessary.
 - [ ] `user_manual.md` is updated for any user-facing changes.
 
-## Bugs
-
-<!-- Try to include: Expected vs Actual behavior, Steps to reproduce -->
-
-### Radio module
+## Radio module
 
 - [ ]
 
-### Music module
-
-### Podcast module
-
-- [ ]
-- [ ]
-
-### Common module
+## Music module
 
 - [ ]
 
-## New Features
+## Podcast module
 
-<!-- Try to include: Acceptance Criteria -->
+- [ ] When clicking the information icon of an episode in the now playing screen, it only shows a few lines, and then you need to scroll to see the full text. I would like to see the full description of the episode right away.
+- [] The episode title of the now playing screen is truncated. I would like to see the full title of the episode.
 
-### Radio module
+### Bugs
 
-- [ ]
+- [] when playing an episode and then select another in the recent list, it quickly shows the detial screen of the new episode, but it then quickly goes back to the previous episode's detail screen and continues to play the previous episode. I expected it to just update the episode details and continue playing the new episode.
 
-### Music module
-
-- [ ]
-
-### Podcast module
-
-- [x] Remove the 'now playing' screen. The mini player at the bottom should link to the detail screen when clicked.
-- [x] When marked played in the detail screen, the episode must be removed, and playing stopped, and the mini player should be cleared. We go back to the proper Recent episode list screen
-
-### Common module
+## Common module
 
 - []
-
-## Technical Debt & Chores
-
-<!-- For refactoring, dependency updates, or internal improvements -->
-
-### Radio module
-
-- [ ]
-
-### Music module
-
-- [ ]
-
-### Podcast module
-
-- [ ]
-
-### Common module
-
-- [ ]
-- [ ] Implement Import/Export for Podcast subscriptions (OPML format)
-- [ ] Implement Import/Export for Radio station lists (JSON/Text)
-- [ ] When using import/export, podcast and radio should be both handled at the same time (not 2 different buttons to do the same thing for each one)

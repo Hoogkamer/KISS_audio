@@ -130,10 +130,8 @@ class PodcastRepository(private val context: android.content.Context, private va
 
             val updated = episode.copy(playbackPositionMs = positionMs, durationMs = durationMs, isFinished = finalFinished)
             dao.updateEpisode(updated)
-            
-            if (isFinished && updated.isDownloaded) {
-                deleteEpisodeFile(updated)
-            }
+            // Note: File deletion is handled exclusively by markAsPlayed() to avoid
+            // race conditions between the position updater and STATE_ENDED handler.
         }
     }
 

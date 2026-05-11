@@ -94,13 +94,13 @@ fun UnifiedPlayer(
     onSkipBack: () -> Unit = {},
     onSkipForward: () -> Unit = {},
     onSpeedChange: (Float) -> Unit = {},
-    onToggleShuffle: () -> Unit = {},
-    onToggleRepeat: () -> Unit = {},
+    onToggleShuffle: (() -> Unit)? = null,
+    onToggleRepeat: (() -> Unit)? = null,
     onSourceClick: () -> Unit = {}
 ) {
     var showInfo by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp).verticalScroll(rememberScrollState())) {
         // Source Scored Header
         Surface(
             modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).clickable { onSourceClick() },
@@ -116,20 +116,20 @@ fun UnifiedPlayer(
 
         // Metadata Section with Scored Grid
         Surface(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
             color = Color.Transparent
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(modifier = Modifier.weight(1f)) {
+            Column {
+                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
                     Column(modifier = Modifier.weight(1f).padding(16.dp)) {
                         Text("ARTIST:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                        Text(state.artist?.uppercase() ?: "---", style = MaterialTheme.typography.headlineMedium, maxLines = 2)
+                        Text(state.artist?.uppercase() ?: "---", style = MaterialTheme.typography.headlineMedium)
                         
                         Spacer(Modifier.height(16.dp))
                         
                         Text("TRACK:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                        Text(state.title.uppercase(), style = MaterialTheme.typography.headlineMedium, maxLines = 3)
+                        Text(state.title.uppercase(), style = MaterialTheme.typography.headlineMedium)
                     }
                     
                     // Artwork Placeholder / Image
@@ -283,11 +283,11 @@ fun UnifiedPlayer(
         // Optional Description Field
         AnimatedVisibility(visible = showInfo && !state.description.isNullOrBlank()) {
             Surface(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).padding(bottom = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
                 color = MaterialTheme.colorScheme.surface
             ) {
-                Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text("DESCRIPTION:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
                     HtmlText(state.description ?: "")
@@ -344,15 +344,12 @@ fun PlayerScreen(
     var cameFromRecent: Boolean by remember { mutableStateOf(false) }
     var selectedPodcastId: Int by remember { mutableIntStateOf(appConfig.activePodcastChannelId ?: -1) }
     
-    LaunchedEffect(podcastState.activeEpisode?.id) {
-        val initialId = podcastState.activeEpisode?.id ?: return@LaunchedEffect
-        snapshotFlow { podcastState.activeEpisode?.isFinished }
-            .drop(1)
-            .collect { isFinished ->
-                if (isFinished == true && podcastNav == PodcastNavigation.EPISODE_DETAIL) {
-                    podcastNav = if (cameFromRecent) PodcastNavigation.DASHBOARD else PodcastNavigation.SHOW_DETAIL
-                }
-            }
+    // When activeEpisode becomes null (cleared by ViewModel after completion or mark-played),
+    // navigate back from EPISODE_DETAIL automatically.
+    LaunchedEffect(podcastState.activeEpisode) {
+        if (podcastState.activeEpisode == null && podcastNav == PodcastNavigation.EPISODE_DETAIL) {
+            podcastNav = if (cameFromRecent) PodcastNavigation.DASHBOARD else PodcastNavigation.SHOW_DETAIL
+        }
     }
 
     var isPlayerVisible: Boolean by remember { 
@@ -568,8 +565,10 @@ fun PlayerScreen(
                                     if (miniPlayerProgress > 0) LinearProgressIndicator(progress = { miniPlayerProgress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                                 }
                                 IconButton(onClick = { 
-                                    if (currentDestination == NavigationDestination.PODCASTS && podcastState.activeEpisode != null && activeChannelId != podcastState.activeEpisode?.channelId) {
-                                        viewModel.playPodcastEpisode(podcastState.activeEpisode!!)
+                                    val episode = podcastState.activeEpisode
+                                    if (episode != null && currentMediaId != episode.id.toString()) {
+                                        // Current media doesn't match the active episode — reload it
+                                        viewModel.playPodcastEpisode(episode)
                                     } else {
                                         viewModel.playPause()
                                     }
@@ -587,7 +586,7 @@ fun PlayerScreen(
                         selected = currentDestination == NavigationDestination.MUSIC, 
                         onClick = { 
                             if (currentDestination != NavigationDestination.MUSIC) {
-                                viewModel.stopAllPlayback()
+                                viewModel.setCategory("MUSIC")
                                 currentDestination = NavigationDestination.MUSIC
                                 isPlayerVisible = false
                             }
@@ -606,7 +605,7 @@ fun PlayerScreen(
                         selected = currentDestination == NavigationDestination.RADIO, 
                         onClick = { 
                             if (currentDestination != NavigationDestination.RADIO) {
-                                viewModel.stopAllPlayback()
+                                viewModel.setCategory("RADIO")
                                 currentDestination = NavigationDestination.RADIO
                                 isPlayerVisible = false
                             }
@@ -625,7 +624,7 @@ fun PlayerScreen(
                         selected = currentDestination == NavigationDestination.PODCASTS, 
                         onClick = { 
                             if (currentDestination != NavigationDestination.PODCASTS) {
-                                viewModel.stopAllPlayback()
+                                viewModel.setCategory("PODCASTS")
                                 currentDestination = NavigationDestination.PODCASTS
                                 isPlayerVisible = false
                                 podcastNav = PodcastNavigation.DASHBOARD

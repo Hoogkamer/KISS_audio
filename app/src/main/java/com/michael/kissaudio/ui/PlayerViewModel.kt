@@ -179,6 +179,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }, MoreExecutors.directExecutor())
     }
 
+    // Determines the media type of the currently loaded item based on its mediaId format,
+    // rather than relying on the asynchronously-updated lastCategory config.
+    private fun currentMediaType(): String? {
+        val mediaId = mediaController?.currentMediaItem?.mediaId ?: return null
+        return when {
+            mediaId.toIntOrNull() != null -> "PODCASTS"  // Episode IDs are integers
+            _radioState.value.activeChannel?.streamUrl == mediaId -> "RADIO"
+            else -> "MUSIC"
+        }
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
@@ -196,9 +207,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val artist = mediaMetadata.artist?.toString()
             val album = mediaMetadata.albumTitle?.toString()
             val station = mediaMetadata.station?.toString() ?: album
+            val mediaType = currentMediaType()
 
             // Update Radio State specifically
-            if (_appConfig.value.lastCategory == "RADIO") {
+            if (mediaType == "RADIO") {
                 _radioState.update { it.copy(streamMetadata = if (artist != null && title != null) "$artist - $title" else title) }
                 
                 // Auto-discovery for Radio Station names
@@ -214,7 +226,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             
             // Update Music State specifically
-            if (_appConfig.value.lastCategory == "MUSIC") {
+            if (mediaType == "MUSIC") {
                 _musicState.update { it.copy(
                     currentTrackName = title ?: "",
                     currentTrackArtist = artist,
@@ -223,7 +235,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             
             // Update Podcast State specifically
-            if (_appConfig.value.lastCategory == "PODCASTS") {
+            if (mediaType == "PODCASTS") {
                 _podcastState.update { it.copy(
                     currentTrackName = title ?: it.activeEpisode?.title ?: "",
                     currentTrackArtist = artist ?: it.activeEpisode?.podcastTitle
@@ -238,29 +250,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            val mediaType = currentMediaType()
             when (playbackState) {
                 Player.STATE_BUFFERING -> {
-                    if (_appConfig.value.lastCategory == "RADIO") {
+                    if (mediaType == "RADIO") {
                         _radioState.update { it.copy(streamMetadata = "Buffering...") }
                     }
                 }
                 Player.STATE_READY -> {
                     if (!isRefreshing) {
                         val dur = mediaController?.duration?.coerceAtLeast(0) ?: 0L
-                        val cat = _appConfig.value.lastCategory
-                        if (cat == "MUSIC") _musicState.update { it.copy(durationMs = dur) }
-                        if (cat == "PODCASTS") _podcastState.update { it.copy(durationMs = dur) }
+                        if (mediaType == "MUSIC") _musicState.update { it.copy(durationMs = dur) }
+                        if (mediaType == "PODCASTS") _podcastState.update { it.copy(durationMs = dur) }
                         updateCurrentTrackInfo()
                     }
                 }
                 Player.STATE_ENDED -> {
-                    if (_appConfig.value.lastCategory == "PODCASTS") {
+                    // For podcasts: only clean up UI state here.
+                    // The actual isFinished flag is set by PodcastRepository.updatePlaybackPosition()
+                    // which is the single source of truth for episode completion.
+                    if (mediaType == "PODCASTS") {
                         _podcastState.value.activeEpisode?.let { episode ->
-                            markEpisodeAsPlayed(episode)
-                            // Clear active episode and channel to hide mini player and UI detail
-                            setActiveEpisode(null)
-                            _activeChannelId.value = null
-                            updateConfig { it.copy(activePodcastChannelId = null) }
+                            if (!episode.isFinished) {
+                                // Edge case: STATE_ENDED fired before position updater caught it.
+                                // Mark it as played now.
+                                markEpisodeAsPlayed(episode)
+                            }
+                            // Clean up UI state: clear active episode and channel to hide mini player
+                            cleanupAfterEpisodeEnd()
                         }
                     }
                 }
@@ -292,18 +309,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     mediaController?.let {
                         val pos = it.currentPosition.coerceAtLeast(0L)
                         val dur = it.duration
-                        val cat = _appConfig.value.lastCategory
+                        val mediaType = currentMediaType()
                         
-                        if (cat == "MUSIC") _musicState.update { s -> s.copy(positionMs = pos, durationMs = if (dur > 0) dur else s.durationMs) }
-                        if (cat == "PODCASTS") _podcastState.update { s -> s.copy(positionMs = pos, durationMs = if (dur > 0) dur else s.durationMs) }
+                        if (mediaType == "MUSIC") _musicState.update { s -> s.copy(positionMs = pos, durationMs = if (dur > 0) dur else s.durationMs) }
+                        if (mediaType == "PODCASTS") _podcastState.update { s -> s.copy(positionMs = pos, durationMs = if (dur > 0) dur else s.durationMs) }
                         
                         _podcastState.value.activeEpisode?.let { episode ->
                             val isCorrectItem = it.currentMediaItem?.mediaId == episode.id.toString()
                             val isReady = it.playbackState == Player.STATE_READY || it.playbackState == Player.STATE_BUFFERING
                             
-                            if (cat == "PODCASTS" && isCorrectItem && isReady) {
+                            if (mediaType == "PODCASTS" && isCorrectItem && isReady) {
                                 if (!(pos == 0L && episode.playbackPositionMs > 1000 && !it.isPlaying)) {
+                                    val wasFinished = episode.isFinished
                                     podcastRepository.updatePlaybackPosition(episode, pos, dur)
+                                    // If the episode just auto-finished, clean up UI
+                                    if (!wasFinished && dur > 0 && (dur - pos) < 2000) {
+                                        cleanupAfterEpisodeEnd()
+                                    }
                                 }
                             }
                         }
@@ -344,9 +366,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectChannel(channelId: Int, autoPlay: Boolean = true) {
-        // Optimization: If this channel is already active and loaded, just return
+        // Optimization: If this music folder channel is already active and loaded, just return.
+        // Only applies to FOLDER type — podcasts and radio need different handling.
         if (_activeChannelId.value == channelId && _musicState.value.audioFiles.isNotEmpty()) {
-            return
+            // Check if it's actually a folder before fast-pathing
+            val currentChannel = _musicState.value.activeChannel
+            if (currentChannel?.type == ChannelType.FOLDER) return
+        }
+        // Podcast fast-path: if same podcast channel and episodes already loaded, skip reload
+        if (_activeChannelId.value == channelId && _podcastState.value.episodes.isNotEmpty()) {
+            val currentChannel = _podcastState.value.activeChannel
+            if (currentChannel?.type == ChannelType.PODCAST && currentChannel.id == channelId) return
         }
         
         playerLoadJob?.cancel()
@@ -510,10 +540,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         mediaController?.stop()
         mediaController?.clearMediaItems()
         _activeChannelId.value = null
+        _isPlaying.value = false
         
         _musicState.update { it.copy(activeChannel = null) }
         _radioState.update { it.copy(activeChannel = null) }
-        _podcastState.update { it.copy(activeChannel = null, activeEpisode = null) }
+        _podcastState.update { it.copy(
+            activeChannel = null, activeEpisode = null,
+            currentTrackName = "", currentTrackArtist = null,
+            positionMs = 0, durationMs = 0, isPlayingActiveEpisode = false
+        ) }
         
         updateConfig { it.copy(
             activeMusicChannelId = null, 
@@ -521,6 +556,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             activePodcastChannelId = null, 
             activePodcastEpisodeId = null
         ) }
+    }
+
+    /** Cleans up UI state after a podcast episode ends (either auto-finish or mark-as-played). */
+    private fun cleanupAfterEpisodeEnd() {
+        mediaController?.stop()
+        mediaController?.clearMediaItems()
+        setActiveEpisode(null)
+        _activeChannelId.value = null
+        _isPlaying.value = false
+        updateConfig { it.copy(activePodcastChannelId = null, activePodcastEpisodeId = null) }
     }
     
     fun next() = mediaController?.seekToNext()
@@ -696,10 +741,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun markEpisodeAsPlayed(episode: PodcastEpisode) = viewModelScope.launch {
         if (_podcastState.value.activeEpisode?.id == episode.id) {
-            mediaController?.stop()
-            setActiveEpisode(null)
-            _activeChannelId.value = null
-            updateConfig { it.copy(activePodcastChannelId = null, activePodcastEpisodeId = null) }
+            cleanupAfterEpisodeEnd()
         }
         podcastRepository.markAsPlayed(episode)
     }
@@ -725,9 +767,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setActiveEpisode(episode: PodcastEpisode?) {
-        if (episode != null) {
-            _podcastState.update { it.copy(activeEpisode = episode) }
-        }
+        // Always update immediately — including clearing to null
+        _podcastState.update { it.copy(activeEpisode = episode) }
         observeActiveEpisode(episode?.id)
         updateConfig { it.copy(activePodcastEpisodeId = episode?.id) }
     }
@@ -767,13 +808,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     lastCategory = "PODCASTS"
                 ) }
 
-                // 2. Update UI tracking
+                // 2. Update UI tracking (position/duration only — let ExoPlayer listener set isPlaying)
                 _podcastState.update { it.copy(
                     positionMs = episode.playbackPositionMs,
-                    durationMs = episode.durationMs,
-                    isPlayingActiveEpisode = true
+                    durationMs = episode.durationMs
                 ) }
-                _isPlaying.value = true
 
                 // 3. Load into ExoPlayer
                 mediaController?.let { controller ->

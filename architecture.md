@@ -73,15 +73,23 @@ KISS Audio is designed to be the "Center" of the device.
 
 A critical part of the KISS philosophy is that the app should always remember "where you are."
 
+### Single Source of Truth for Playback State
+- **`isPlaying`:** Derived exclusively from the ExoPlayer `Player.Listener.onIsPlayingChanged()` callback. Never set optimistically.
+- **Media Type Detection:** The `currentMediaType()` helper inspects the current `mediaId` format (integer = podcast episode, matching `streamUrl` = radio, else = music) rather than relying on the asynchronously-updated `lastCategory` config. This prevents state updates from being routed to the wrong module during category transitions.
+- **Non-Destructive Tab Switching:** Navigating between Music, Radio, and Podcasts tabs only updates the `lastCategory` in config. Audio continues playing. Starting a *new* playback in a *different* module implicitly stops the current one via `loadChannelIntoPlayer()`.
+
 ### State-Based Navigation
 The UI state (`NavigationDestination`) and module-specific navigation (e.g., `PodcastNavigation`) are decoupled from the media engine but react to it.
-- **Auto-Navigation:** When a podcast episode is triggered, the app automatically navigates to the `EpisodeDetailScreen`.
+- **Auto-Navigation:** When a podcast episode is triggered, the app navigates to the `EpisodeDetailScreen`.
 - **Context Resumption:** If you switch from Podcasts to Radio and back, the app remains on the last viewed screen for that module.
+- **Episode Completion Navigation:** When `activeEpisode` becomes `null` (cleared by `cleanupAfterEpisodeEnd()`), the UI `LaunchedEffect` navigates back from `EPISODE_DETAIL` to the previous context (Dashboard or Show Detail).
 
 ### Cleanup Rituals
-- **Episode Completion:** When an episode finishes (or is manually marked played), the app:
-    1. Stops playback.
-    2. Clears the Media3 session.
-    3. Resets the `activeEpisodeId`.
-    4. Navigates back to the previous context (Dashboard or Show Detail).
-    5. Deletes the local file.
+- **Episode Completion (unified codepath):** When an episode finishes, the app follows this sequence:
+    1. `PodcastRepository.updatePlaybackPosition()` detects < 2 seconds remaining and sets `isFinished = true` in the database (single source of truth for completion).
+    2. The position update loop in `PlayerViewModel` detects the auto-finish and calls `cleanupAfterEpisodeEnd()`.
+    3. `cleanupAfterEpisodeEnd()` stops ExoPlayer, clears the Media3 session, sets `activeEpisode = null`, resets `activeChannelId`, and clears `isPlaying`.
+    4. The file is deleted when `markAsPlayed()` is subsequently called.
+    5. As a safety net, `Player.STATE_ENDED` also calls `cleanupAfterEpisodeEnd()` if the position updater missed it.
+- **Manual Mark as Played:** Calling `markEpisodeAsPlayed()` checks if the episode is the active one, and if so, runs `cleanupAfterEpisodeEnd()` before marking it in the repository.
+
