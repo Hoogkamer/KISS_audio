@@ -264,6 +264,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         if (mediaType == "PODCASTS") _podcastState.update { it.copy(durationMs = dur) }
                         updateCurrentTrackInfo()
                     }
+                    if (mediaType == "RADIO") {
+                        _radioState.update { 
+                            if (it.streamMetadata == "Connecting..." || it.streamMetadata == "Buffering...") {
+                                it.copy(streamMetadata = null)
+                            } else it
+                        }
+                    }
                 }
                 Player.STATE_ENDED -> {
                     // For podcasts: only clean up UI state here.
@@ -358,6 +365,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     currentTrackAlbum = album,
                     currentTrackIndex = index
                 ) }
+                "RADIO" -> {
+                    _radioState.update { 
+                        if (title.isNotEmpty()) {
+                            it.copy(streamMetadata = if (artist != null) "$artist - $title" else title)
+                        } else {
+                            if (it.streamMetadata == "Connecting..." || it.streamMetadata == "Buffering...") {
+                                it.copy(streamMetadata = null)
+                            } else it
+                        }
+                    }
+                }
                 "PODCASTS" -> {
                     // We don't update podcast titles here as they are driven by the ActiveEpisode state
                 }

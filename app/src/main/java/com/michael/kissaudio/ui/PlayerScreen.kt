@@ -321,7 +321,7 @@ fun PlayerScreen(
     var showAddMusic by remember { mutableStateOf(false) }
     var showRadioSearch by remember { mutableStateOf(false) }
     var showPodcastSearch by remember { mutableStateOf(false) }
-    var showFileBrowser by remember { mutableStateOf(false) }
+
     val pendingMarkPlayed by viewModel.pendingMarkPlayed.collectAsStateWithLifecycle()
     
     var currentDestination: NavigationDestination by remember { 
@@ -537,21 +537,24 @@ fun PlayerScreen(
                                 .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
                             color = MaterialTheme.colorScheme.surface
                         ) {
-                            val miniPlayerTitle = when(appConfig.lastCategory) {
-                                "MUSIC" -> musicState.currentTrackName
-                                "RADIO" -> radioState.streamMetadata ?: "RADIO"
-                                "PODCASTS" -> podcastState.currentTrackName.ifEmpty { podcastState.activeEpisode?.title ?: "PODCAST" }
-                                else -> "KISS AUDIO"
+                            // Derive mini player content from the *actually playing* channel type,
+                            // NOT from lastCategory (which changes when the user browses tabs).
+                            val activeChannel = allChannels.find { it.id == activeChannelId }
+                            val miniPlayerTitle = when (activeChannel?.type) {
+                                ChannelType.FOLDER -> musicState.currentTrackName
+                                ChannelType.RADIO -> radioState.streamMetadata ?: "RADIO"
+                                ChannelType.PODCAST -> podcastState.currentTrackName.ifEmpty { podcastState.activeEpisode?.title ?: "PODCAST" }
+                                null -> "KISS AUDIO"
                             }
-                            val miniPlayerArtist = when(appConfig.lastCategory) {
-                                "MUSIC" -> musicState.currentTrackArtist
-                                "RADIO" -> null
-                                "PODCASTS" -> podcastState.currentTrackArtist ?: podcastState.activeEpisode?.podcastTitle
-                                else -> null
+                            val miniPlayerArtist = when (activeChannel?.type) {
+                                ChannelType.FOLDER -> musicState.currentTrackArtist
+                                ChannelType.RADIO -> null
+                                ChannelType.PODCAST -> podcastState.currentTrackArtist ?: podcastState.activeEpisode?.podcastTitle
+                                null -> null
                             }
-                            val miniPlayerProgress = when(appConfig.lastCategory) {
-                                "MUSIC" -> if (musicState.durationMs > 0) musicState.positionMs.toFloat() / musicState.durationMs else 0f
-                                "PODCASTS" -> if (podcastState.durationMs > 0) podcastState.positionMs.toFloat() / podcastState.durationMs else 0f
+                            val miniPlayerProgress = when (activeChannel?.type) {
+                                ChannelType.FOLDER -> if (musicState.durationMs > 0) musicState.positionMs.toFloat() / musicState.durationMs else 0f
+                                ChannelType.PODCAST -> if (podcastState.durationMs > 0) podcastState.positionMs.toFloat() / podcastState.durationMs else 0f
                                 else -> 0f
                             }
 
@@ -684,9 +687,7 @@ fun PlayerScreen(
                         onSeek = { if (activeChannelId == musicState.activeChannel?.id) viewModel.seekTo(it) },
                         onPlayFileIndex = { index -> 
                             viewModel.playFileAtIndex(index)
-                            showFileBrowser = false
                         },
-                        onToggleFileBrowser = { showFileBrowser = !showFileBrowser },
                         onToggleShuffle = { viewModel.toggleShuffle() },
                         onToggleRepeat = { viewModel.toggleRepeat() }
                     )
@@ -805,21 +806,12 @@ fun PlayerScreen(
         )
 
 
-        if (showFileBrowser && musicState.activeChannel != null) {
-            FileBrowserDialog(
-                files = musicState.audioFiles,
-                currentTrackIndex = if (activeChannelId == musicState.activeChannel?.id) musicState.currentTrackIndex else -1,
-                onSelect = { index -> 
-                    viewModel.playFileAtIndex(index)
-                    showFileBrowser = false
-                },
-                onDismiss = { showFileBrowser = false }
-            )
-        }
+        // FileBrowserDialog is now managed inside MusicDashboard itself
     }
 
 @Composable
-fun MusicDashboard(channels: List<AudioChannel>, isLoading: Boolean, activeChannelId: Int?, isPlaying: Boolean, currentPositionMs: Long, currentDurationMs: Long, isPlayerVisible: Boolean, activeChannel: AudioChannel?, audioFiles: List<com.michael.kissaudio.scanner.AudioFile>, currentTrackName: String, currentTrackArtist: String?, currentTrackAlbum: String?, currentTrackIndex: Int, shuffleEnabled: Boolean, repeatEnabled: Boolean, onChannelClick: (Int) -> Unit, onDeleteChannel: (Int) -> Unit, onRenameChannel: (Int, String) -> Unit, onCreateChannel: () -> Unit, onFolderPick: () -> Unit, onPlayFileIndex: (Int) -> Unit, onToggleFileBrowser: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit, onToggleShuffle: () -> Unit, onToggleRepeat: () -> Unit) {
+fun MusicDashboard(channels: List<AudioChannel>, isLoading: Boolean, activeChannelId: Int?, isPlaying: Boolean, currentPositionMs: Long, currentDurationMs: Long, isPlayerVisible: Boolean, activeChannel: AudioChannel?, audioFiles: List<com.michael.kissaudio.scanner.AudioFile>, currentTrackName: String, currentTrackArtist: String?, currentTrackAlbum: String?, currentTrackIndex: Int, shuffleEnabled: Boolean, repeatEnabled: Boolean, onChannelClick: (Int) -> Unit, onDeleteChannel: (Int) -> Unit, onRenameChannel: (Int, String) -> Unit, onCreateChannel: () -> Unit, onFolderPick: () -> Unit, onPlayFileIndex: (Int) -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit, onSeek: (Long) -> Unit, onToggleShuffle: () -> Unit, onToggleRepeat: () -> Unit) {
+    var showFileBrowserLocal by remember { mutableStateOf(false) }
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -844,8 +836,24 @@ fun MusicDashboard(channels: List<AudioChannel>, isLoading: Boolean, activeChann
             onPrevious = onPrevious,
             onToggleShuffle = onToggleShuffle,
             onToggleRepeat = onToggleRepeat,
-            onSourceClick = onToggleFileBrowser
+            onSourceClick = { showFileBrowserLocal = true }
         )
+        if (showFileBrowserLocal) {
+            FileBrowserDialog(
+                files = audioFiles,
+                currentTrackIndex = if (activeChannelId == activeChannel.id) currentTrackIndex else -1,
+                onSelect = { index ->
+                    onPlayFileIndex(index)
+                    showFileBrowserLocal = false
+                },
+                onFolderPick = {
+                    showFileBrowserLocal = false
+                    onFolderPick()
+                },
+                folderName = activeChannel.folderDisplayName,
+                onDismiss = { showFileBrowserLocal = false }
+            )
+        }
     } else if (channels.isEmpty()) {
         EmptyState("NO MUSIC DECKS YET", Icons.Default.LibraryMusic, onCreateChannel)
     } else {
@@ -1760,60 +1768,117 @@ fun FileBrowserDialog(
     files: List<com.michael.kissaudio.scanner.AudioFile>,
     currentTrackIndex: Int,
     onSelect: (Int) -> Unit,
+    onFolderPick: () -> Unit,
+    folderName: String?,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select Track") },
+        title = { Text("SOURCE") },
         text = {
-            if (files.isEmpty()) {
-                Text("No tracks found in this folder.")
-            } else {
-                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                    itemsIndexed(files) { index, file ->
-                        val isSelected = index == currentTrackIndex
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelect(index) }
-                                .padding(vertical = 12.dp, horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                if (isSelected) Icons.Default.PlayArrow else Icons.Default.MusicNote,
-                                contentDescription = null,
-                                tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(24.dp)
+            Column {
+                // Change Folder button — scored BRAUN panel
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onFolderPick() },
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+                    color = Color.Transparent,
+                    shape = RoundedCornerShape(2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "CHANGE SOURCE FOLDER",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = file.title ?: file.displayName.removeSuffix(".mp3"),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                            Text(
+                                folderName?.uppercase() ?: "NO FOLDER SELECTED",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Divider label
+                Text(
+                    "TRACKS:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                if (files.isEmpty()) {
+                    Text("No tracks found in this folder.")
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 350.dp)) {
+                        itemsIndexed(files) { index, file ->
+                            val isSelected = index == currentTrackIndex
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(index) }
+                                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    if (isSelected) Icons.Default.PlayArrow else Icons.Default.MusicNote,
+                                    contentDescription = null,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(24.dp)
                                 )
-                                if (!file.artist.isNullOrBlank()) {
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = file.artist!!,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        text = file.title ?: file.displayName.removeSuffix(".mp3"),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (!file.artist.isNullOrBlank()) {
+                                        Text(
+                                            text = file.artist!!,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        if (index < files.size - 1) {
-                            HorizontalDivider(modifier = Modifier.alpha(0.5f))
+                            if (index < files.size - 1) {
+                                HorizontalDivider(modifier = Modifier.alpha(0.5f))
+                            }
                         }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text("CLOSE") }
         }
     )
 }
